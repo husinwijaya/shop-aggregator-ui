@@ -1,7 +1,9 @@
 package net.sin;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.net.UrlEscapers;
+import net.sin.model.ProductResult;
+import net.sin.model.ShopResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,18 +15,15 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
-import java.util.Collection;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
-import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
 
 @Service
 public class BackendService {
     private static final Logger log = LoggerFactory.getLogger(BackendService.class);
-    private final ConcurrentLinkedDeque<CompletableFuture<HttpResponse<String>>> cache = new ConcurrentLinkedDeque<>();
     @Autowired
     private HttpClient httpClient;
     @Autowired
@@ -36,22 +35,43 @@ public class BackendService {
         return HttpRequest.newBuilder(URI.create(backendUri + path));
     }
 
-    public List<String> getSuggestion(String term) {
-        CompletableFuture<HttpResponse<String>> future = httpClient.sendAsync(initRequest("/tokopedia/suggest/" + term).build(), BodyHandlers.ofString()).completeOnTimeout(null, 5, TimeUnit.SECONDS);
-        cache.add(future);
+    public Set<String> getSuggestion(String term) {
+        String body = get("/tokopedia/suggest/" + term);
         try {
-            HttpResponse<String> response = future.join();
-            if (response == null) return emptyList();
-            String body = response.body();
-            if (body.isEmpty()) return emptyList();
-            try {
-                return objectMapper.readValue(body, objectMapper.getTypeFactory().constructCollectionType(Collection.class, String.class));
-            } catch (JsonProcessingException e) {
-                log.error("failed get suggestion", e);
-                return emptyList();
-            }
-        } finally {
-            cache.remove(future);
+            return objectMapper.readValue(body, objectMapper.getTypeFactory().constructCollectionType(HashSet.class, String.class));
+        } catch (Exception e) {
+            log.error("failed get suggestion, got body: " + body, e);
+            return emptySet();
         }
+    }
+
+    public Set<ShopResult> search(String term) {
+        String body = get("/tokopedia/search/" + term);
+        try {
+            return objectMapper.readValue(body, objectMapper.getTypeFactory().constructCollectionType(HashSet.class, ShopResult.class));
+        } catch (Exception e) {
+            log.error("failed get suggestion, got body: " + body, e);
+            return emptySet();
+        }
+    }
+
+    public Set<ProductResult> searchPerStore(long storeId, String term) {
+        String body = get("/tokopedia/search/" + storeId + "/" + term);
+        try {
+            return objectMapper.readValue(body, objectMapper.getTypeFactory().constructCollectionType(HashSet.class, ProductResult.class));
+        } catch (Exception e) {
+            log.error("failed get suggestion, got body: " + body, e);
+            return emptySet();
+        }
+    }
+
+    private String get(String path) {
+        path = UrlEscapers.urlFragmentEscaper().escape(path);
+        log.info("get path: {}", path);
+        HttpResponse<String> response = httpClient.sendAsync(initRequest(path).build(), BodyHandlers.ofString()).completeOnTimeout(null, 5, TimeUnit.SECONDS).join();
+        if (response == null) return "";
+        String body = response.body();
+        if (body.isEmpty()) return "";
+        return body;
     }
 }
